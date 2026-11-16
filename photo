@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>刷新图库</title>
+<style>
+  * { box-sizing: border-box; }
+
+  :root {
+    --bg: #0d1117;
+    --border: #232b36;
+    --text: #e6edf3;
+    --muted: #8b98a9;
+    --accent: #3b82f6;
+    --accent-2: #a855f7;
+  }
+
+  html, body { height: 100%; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background:
+      radial-gradient(900px 500px at 50% -12%, #1b2534 0%, transparent 60%),
+      radial-gradient(700px 500px at 100% 100%, #1a1530 0%, transparent 55%),
+      var(--bg);
+    background-attachment: fixed;
+  }
+
+  /* ---------- 顶栏 ---------- */
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    padding: 14px clamp(14px, 4vw, 32px);
+    background: rgba(13, 17, 23, .75);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+  }
+
+  header h1 {
+    margin: 0;
+    font-size: 1.05rem;
+    letter-spacing: .02em;
+    white-space: nowrap;
+  }
+
+  #status {
+    font-size: .8rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .spacer { flex: 1 1 auto; }
+
+  /* ---------- 刷新按钮 ---------- */
+  .refresh {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 18px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff;
+    font: inherit;
+    font-size: .9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform .15s ease, box-shadow .25s ease, filter .2s ease;
+  }
+
+  .refresh:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 24px rgba(59, 130, 246, .38);
+  }
+
+  .refresh:active:not(:disabled) {
+    transform: translateY(0) scale(.97);
+  }
+
+  .refresh:disabled {
+    cursor: progress;
+    filter: saturate(.55) brightness(.85);
+  }
+
+  .refresh .icon { transition: transform .3s ease; }
+  .refresh.loading .icon { animation: spin 1s linear infinite; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---------- 图库网格 ---------- */
+  main {
+    padding: clamp(16px, 3vw, 32px);
+    max-width: 1600px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: clamp(12px, 1.5vw, 18px);
+  }
+
+  /* ---------- 卡片 ---------- */
+  .card {
+    position: relative;
+    margin: 0;
+    aspect-ratio: 4 / 3;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    background: #1a2029;
+    cursor: pointer;
+    opacity: 0;
+    transform: translateY(10px) scale(.985);
+    animation: cardIn .5s cubic-bezier(.22, .61, .36, 1) forwards;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  @keyframes cardIn {
+    to { opacity: 1; transform: none; }
+  }
+
+  /* 骨架屏微光 */
+  .card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background: linear-gradient(100deg, #1a2029 30%, #242e3b 50%, #1a2029 70%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s linear infinite;
+  }
+
+  .card.loaded::before { content: none; }
+
+  @keyframes shimmer {
+    from { background-position: 200% 0; }
+    to   { background-position: -200% 0; }
+  }
+
+  .card img {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    opacity: 0;
+    transition: opacity .5s ease, transform .6s cubic-bezier(.22, .61, .36, 1);
+  }
+
+  .card.loaded img { opacity: 1; }
+  .card:hover img { transform: scale(1.06); }
+
+  .card .meta {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    z-index: 3;
+    margin: 0;
+    padding: 26px 12px 10px;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: .72rem;
+    letter-spacing: .03em;
+    color: #cbd5e1;
+    background: linear-gradient(to top, rgba(0, 0, 0, .78), transparent);
+    opacity: 0;
+    transition: opacity .25s ease;
+  }
+
+  .card:hover .meta,
+  .card:focus-visible .meta { opacity: 1; }
+
+  .card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* ---------- 大图预览 ---------- */
+  #lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(5, 8, 12, .86);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .25s ease;
+  }
+
+  #lightbox.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  #lightbox img {
+    max-width: 92vw;
+    max-height: 86vh;
+    border-radius: 14px;
+    box-shadow: 0 28px 70px rgba(0, 0, 0, .65);
+    transform: scale(.96);
+    transition: transform .28s cubic-bezier(.22, .61, .36, 1);
+  }
+
+  #lightbox.open img { transform: scale(1); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important;
+    }
+  }
+</style>
+</head>
+<body>
+
+  <header>
+    <h1>🖼️ 刷新图库</h1>
+    <span id="status">准备中…</span>
+    <div class="spacer"></div>
+    <button id="refreshBtn" class="refresh" type="button">
+      <svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+           stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12a9 9 0 1 1-3.2-6.9" />
+        <path d="M21 3v6h-6" />
+      </svg>
+      <span>刷新</span>
+    </button>
+  </header>
+
+  <main id="gallery"></main>
+
+  <div id="lightbox" role="dialog" aria-modal="true" aria-label="图片预览">
+    <img id="lbImg" alt="预览图" />
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var gallery    = document.getElementById('gallery');
+  var refreshBtn = document.getElementById('refreshBtn');
+  var statusEl   = document.getElementById('status');
+  var lightbox   = document.getElementById('lightbox');
+  var lbImg      = document.getElementById('lbImg');
+
+  var PER_PAGE = 12;   // 每次刷新加载的图片数量
+  var round = 0;       // 刷新次数
+  var token = 0;       // 防止旧批次回调干扰新批次
+  var CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
+
+  /* ---------- 工具 ---------- */
+
+  function randSeed(len) {
+    var s = '';
+    for (var i = 0; i < len; i++) {
+      s += CHARS[(Math.random() * CHARS.length) | 0];
+    }
+    return s;
+  }
+
+  function hashStr(s) {
+    var h = 2166136261;
+    for (var i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return Math.abs(h);
+  }
+
+  function setLoading(on) {
+    refreshBtn.disabled = on;
+    refreshBtn.classList.toggle('loading', on);
+  }
+
+  /* 网络失败时用 Canvas 生成一张渐变占位图 */
+  function makeFallback(img, seed) {
+    var W = 600, H = 450;
+    var c = document.createElement('canvas');
+    c.width = W;
+    c.height = H;
+    var ctx = c.getContext('2d');
+    var hue = hashStr(seed) % 360;
+
+    var g = ctx.createLinearGradient(0, 0, W, H);
+    g.addColorStop(0, 'hsl(' + hue + ' 72% 58%)');
+    g.addColorStop(1, 'hsl(' + ((hue + 70) % 360) + ' 68% 34%)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.globalAlpha = 0.16;
+    ctx.fillStyle = '#fff';
+    for (var i = 0; i < 5; i++) {
+      ctx.beginPath();
+      ctx.arc(
+        hashStr(seed + i) % W,
+        hashStr(seed + i + 'y') % H,
+        40 + (hashStr(seed + i + 'r') % 90),
+        0, Math.PI * 2
+      );
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = 'rgba(255,255,255,.92)';
+    ctx.font = '600 26px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('图片加载失败', W / 2, H / 2);
+
+    img.src = c.toDataURL('image/png');
+  }
+
+  /* ---------- 创建一张卡片 ---------- */
+
+  function createCard(index, onSettled) {
+    var seed = randSeed(9);
+
+    var card = document.createElement('figure');
+    card.className = 'card';
+    card.style.animationDelay = (index * 35) + 'ms';
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', '查看第 ' + (index + 1) + ' 张图片');
+
+    var img = document.createElement('img');
+    img.alt = '图库图片 ' + (index + 1);
+    img.decoding = 'async';
+    img.width = 600;
+    img.height = 450;
+
+    var meta = document.createElement('figcaption');
+    meta.className = 'meta';
+    meta.innerHTML =
+      '<span>#' + String(index + 1).padStart(2, '0') + '</span><span>点击放大</span>';
+
+    var settled = false;
+    function settle() {
+      if (settled) return;
+      settled = true;
+      card.classList.add('loaded');
+      onSettled();
+    }
+
+    img.addEventListener('load', settle);
+    img.addEventListener('error', function () {
+      makeFallback(img, seed);
+      settle();
+    });
+
+    img.src = 'https://picsum.photos/seed/' + seed + '/600/450';
+
+    card.appendChild(img);
+    card.appendChild(meta);
+
+    card.addEventListener('click', function () {
+      openLightbox(img.src);
+    });
+    card.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openLightbox(img.src);
+      }
+    });
+
+    return card;
+  }
+
+  /* ---------- 刷新 ---------- */
+
+  function refresh() {
+    var myToken = ++token;
+    var loaded = 0;
+    round++;
+
+    gallery.innerHTML = '';
+    setLoading(true);
+    statusEl.textContent = '第 ' + round + ' 次刷新 · 加载中 0/' + PER_PAGE;
+
+    function onSettled() {
+      if (myToken !== token) return;      // 忽略过期批次
+      loaded++;
+      if (loaded >= PER_PAGE) {
+        setLoading(false);
+        statusEl.textContent =
+          '第 ' + round + ' 次刷新 · 共 ' + PER_PAGE + ' 张 · 已完成';
+      } else {
+        statusEl.textContent =
+          '第 ' + round + ' 次刷新 · 加载中 ' + loaded + '/' + PER_PAGE;
+      }
+    }
+
+    var frag = document.createDocumentFragment();
+    for (var i = 0; i < PER_PAGE; i++) {
+      frag.appendChild(createCard(i, onSettled));
+    }
+    gallery.appendChild(frag);
+  }
+
+  /* ---------- 大图预览 ---------- */
+
+  function openLightbox(src) {
+    if (!src) return;
+    lbImg.src = src;
+    lightbox.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeLightbox() {
+    lightbox.classList.remove('open');
+    document.body.style.overflow = '';
+  }
+
+  /* ---------- 事件绑定 ---------- */
+
+  refreshBtn.addEventListener('click', refresh);
+
+  lightbox.addEventListener('click', closeLightbox);
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeLightbox();
+
+    var tag = document.activeElement && document.activeElement.tagName;
+    var typing = /input|textarea|select/i.test(tag || '');
+
+    if (!typing && (e.key === 'r' || e.key === 'R') &&
+        !e.ctrlKey && !e.metaKey && !e.altKey && !refreshBtn.disabled) {
+      refresh();
+    }
+  });
+
+  /* ---------- 启动 ---------- */
+  refresh();
+})();
+</script>
+</body>
+</html>
